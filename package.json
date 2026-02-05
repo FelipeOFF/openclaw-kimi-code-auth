@@ -1,0 +1,23 @@
+{
+  "name": "@openclaw/kimi-code-auth",
+  "version": "1.0.0",
+  "description": "OpenClaw OAuth provider plugin for Kimi Code CLI (Moonshot AI)",
+  "type": "module",
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "keywords": [
+    "openclaw",
+    "kimi",
+    "moonshot",
+    "oauth",
+    "provider"
+  ],
+  "author": "",
+  "license": "MIT"
+}
