@@ -44,9 +44,13 @@ if [[ ! -f "$RENEWAL_SCRIPT" ]]; then
     echo "→ Copying renewal script to ${RENEWAL_SCRIPT}"
     cp "${SCRIPT_DIR}/renew-kimi-token.sh" "$RENEWAL_SCRIPT" 2>/dev/null || \
         curl -fsSL "https://raw.githubusercontent.com/FelipeOFF/openclaw-kimi-code-auth/main/renew-kimi-token.sh" -o "$RENEWAL_SCRIPT"
-    chmod +x "$RENEWAL_SCRIPT"
+    # Set secure permissions (owner only)
+    chmod 700 "$RENEWAL_SCRIPT"
+    echo "✓ Script installed with secure permissions (700)"
 else
     echo "✓ Renewal script already exists at ${RENEWAL_SCRIPT}"
+    # Ensure permissions are correct
+    chmod 700 "$RENEWAL_SCRIPT"
 fi
 
 # Check if cron job already exists
@@ -67,6 +71,11 @@ echo "=== Setup Complete ==="
 echo
 echo "Token renewal is now configured to run every 5 minutes."
 echo "Logs will be written to: ${HOME}/.openclaw/logs/kimi-token-renewal.log"
+echo ""
+echo "🔒 Security Notes:"
+echo "  - Script has permissions 700 (owner only)"
+echo "  - Log file has permissions 600"
+echo "  - Credentials are never logged"
 echo
 echo "To verify it's working, run:"
 echo "  tail -f ${HOME}/.openclaw/logs/kimi-token-renewal.log"

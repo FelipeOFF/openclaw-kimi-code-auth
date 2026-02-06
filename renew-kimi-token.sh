@@ -16,7 +16,7 @@
 #
 # Or use the setup script: ./setup-auto-renewal.sh
 
-set -e
+set -euo pipefail
 
 # Ensure PATH includes common binary locations
 export PATH="$HOME/.local/bin:$HOME/.asdf/shims:/usr/local/bin:/usr/bin:/bin:$PATH"
@@ -26,22 +26,43 @@ AUTH_PROFILES="${HOME}/.openclaw/agents/main/agent/auth-profiles.json"
 LOG_DIR="${HOME}/.openclaw/logs"
 LOG_FILE="${LOG_DIR}/kimi-token-renewal.log"
 
-# Create log directory if needed
+# Create log directory if needed (with secure permissions)
 mkdir -p "$LOG_DIR"
+chmod 700 "$LOG_DIR" 2>/dev/null || true
 
 # Timestamp
 log_timestamp() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')]"
 }
 
-# Log function
+# Log function (sanitize input to prevent injection)
 log() {
-    echo "$(log_timestamp) $1" | tee -a "$LOG_FILE"
+    local msg="$1"
+    # Remove newlines and control characters to prevent log injection
+    msg=$(printf '%s' "$msg" | tr -d '\n\r' | head -c 500)
+    printf '%s %s\n' "$(log_timestamp)" "$msg" >> "$LOG_FILE"
+}
+
+# Validate file permissions (should be 600 - owner read/write only)
+validate_file_permissions() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        local perms
+        if command -v stat &>/dev/null; then
+            # Linux
+            perms=$(stat -c "%a" "$file" 2>/dev/null || echo "unknown")
+            if [[ "$perms" != "600" && "$perms" != "644" && "$perms" != "unknown" ]]; then
+                log "WARNING: $file has permissions $perms, expected 600 or 644"
+                # Fix permissions
+                chmod 600 "$file" 2>/dev/null || true
+            fi
+        fi
+    fi
 }
 
 # Check if jq is available
 if ! command -v jq &> /dev/null; then
-    log "ERROR: jq is required but not installed"
+    echo "ERROR: jq is required but not installed" >&2
     exit 1
 fi
 
@@ -57,6 +78,9 @@ if [[ ! -f "$KIMI_CREDENTIALS" ]]; then
     log "Please run 'kimi login' first to authenticate"
     exit 1
 fi
+
+# Validate credentials file permissions
+validate_file_permissions "$KIMI_CREDENTIALS"
 
 if [[ ! -f "$AUTH_PROFILES" ]]; then
     log "ERROR: OpenClaw auth profiles not found: $AUTH_PROFILES"
@@ -93,7 +117,7 @@ log "Token expiring soon, attempting renewal..."
 log "Running: kimi login"
 
 # Run with timeout and capture output
-if timeout 30 kimi login 2>&1 | tee -a "$LOG_FILE"; then
+if timeout 30 kimi login 2>&1 >> "$LOG_FILE"; then
     log "kimi login completed successfully"
 else
     log "WARNING: kimi login may require manual authentication or timed out"
@@ -108,9 +132,10 @@ log "Token now expires in ${remaining_minutes} minutes"
 # Update OpenClaw auth-profiles.json with current credentials using jq
 log "Updating OpenClaw auth-profiles.json..."
 
-# Create a temporary file for the updated auth profiles
-TEMP_FILE=$(mktemp)
-trap "rm -f $TEMP_FILE" EXIT
+# Create a temporary directory for secure file operations
+TEMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TEMP_DIR"' EXIT
+TEMP_FILE="$TEMP_DIR/auth-profiles.tmp"
 
 # Read the Kimi credentials
 access_token=$(jq -r '.access_token // empty' "$KIMI_CREDENTIALS")
@@ -122,8 +147,13 @@ if [[ -z "$access_token" || -z "$refresh_token" ]]; then
     exit 1
 fi
 
+# Validate tokens format (basic JWT structure check)
+if [[ ! "$access_token" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]; then
+    log "WARNING: Access token does not appear to be a valid JWT"
+fi
+
 # Update auth-profiles.json using jq
-jq --arg access "$access_token" \
+if jq --arg access "$access_token" \
    --arg refresh "$refresh_token" \
    --argjson expires "$expires_at_ms" '
   .profiles["kimi-coding:default"] = {
@@ -133,20 +163,29 @@ jq --arg access "$access_token" \
     refresh: $refresh,
     expires: $expires
   }
-' "$AUTH_PROFILES" > "$TEMP_FILE"
-
-if [[ $? -eq 0 ]]; then
-    mv "$TEMP_FILE" "$AUTH_PROFILES"
-    log "Auth profiles updated successfully"
+' "$AUTH_PROFILES" > "$TEMP_FILE" 2>>"$LOG_FILE"; then
+    
+    # Ensure secure permissions before moving
+    chmod 600 "$TEMP_FILE"
+    
+    # Atomic move
+    if mv "$TEMP_FILE" "$AUTH_PROFILES"; then
+        # Set secure permissions on the updated file
+        chmod 600 "$AUTH_PROFILES" 2>/dev/null || true
+        log "Auth profiles updated successfully"
+    else
+        log "ERROR: Failed to move updated auth profiles"
+        exit 1
+    fi
 else
-    log "ERROR: Failed to update auth profiles"
+    log "ERROR: Failed to update auth profiles (jq failed)"
     exit 1
 fi
 
 # Restart OpenClaw gateway to pick up new credentials
 log "Restarting OpenClaw gateway..."
 if command -v openclaw &> /dev/null; then
-    if openclaw gateway restart 2>&1 | tee -a "$LOG_FILE"; then
+    if openclaw gateway restart >> "$LOG_FILE" 2>&1; then
         log "Gateway restarted successfully"
     else
         log "WARNING: Failed to restart gateway"

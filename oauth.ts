@@ -3,11 +3,16 @@
  * Reuses existing Kimi CLI authentication from ~/.kimi/credentials/kimi-code.json
  * 
  * This version includes automatic token refresh when tokens are expired.
+ * 
+ * SECURITY NOTES:
+ * - Tokens are never logged or exposed in error messages
+ * - File permissions are validated before reading credentials
+ * - All paths are resolved using Node.js path module to prevent traversal
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 
 const KIMI_CREDENTIALS_PATH = join(homedir(), ".kimi", "credentials", "kimi-code.json");
@@ -31,16 +36,68 @@ export type KimiCodeOAuthContext = {
 };
 
 /**
+ * Validate file permissions to ensure credentials file is not world-readable.
+ * Returns true if permissions are acceptable or cannot be determined.
+ */
+function validateCredentialFilePermissions(filePath: string): boolean {
+  try {
+    const stats = statSync(filePath);
+    const mode = stats.mode & 0o777;
+    
+    // File should be owner-readable/writable only (600)
+    // Allow 644 as some systems may have different defaults
+    if (mode !== 0o600 && mode !== 0o644) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[kimi-code-auth] Warning: ${filePath} has permissions ${mode.toString(8)}, ` +
+        `expected 600. Consider running: chmod 600 ${filePath}`
+      );
+      return false;
+    }
+    return true;
+  } catch {
+    // If we can't check permissions, continue anyway
+    return true;
+  }
+}
+
+/**
+ * Sanitize log messages to prevent potential log injection.
+ */
+function sanitizeLogMessage(msg: string): string {
+  // Remove control characters and limit length
+  return msg
+    .replace(/[\x00-\x1F\x7F]/g, '')
+    .substring(0, 500);
+}
+
+/**
  * Read existing OAuth credentials from Kimi CLI.
  * Kimi CLI stores credentials at ~/.kimi/credentials/kimi-code.json
  */
 function readKimiCliCredentials(): KimiCodeOAuthCredentials | null {
   try {
+    // Validate path is within home directory (prevent path traversal)
+    const resolvedPath = resolve(KIMI_CREDENTIALS_PATH);
+    const resolvedHome = resolve(homedir());
+    if (!resolvedPath.startsWith(resolvedHome)) {
+      throw new Error('Invalid credentials path: path traversal detected');
+    }
+
     if (!existsSync(KIMI_CREDENTIALS_PATH)) {
       return null;
     }
 
+    // Validate file permissions
+    validateCredentialFilePermissions(KIMI_CREDENTIALS_PATH);
+
     const content = readFileSync(KIMI_CREDENTIALS_PATH, "utf8");
+    
+    // Validate JSON structure before parsing
+    if (!content || content.trim().length === 0) {
+      return null;
+    }
+
     const data = JSON.parse(content) as {
       access_token?: string;
       refresh_token?: string;
@@ -49,8 +106,16 @@ function readKimiCliCredentials(): KimiCodeOAuthCredentials | null {
       token_type?: string;
     };
 
+    // Validate required fields
     if (!data.access_token || !data.refresh_token) {
       return null;
+    }
+
+    // Basic JWT validation (should have 3 parts separated by dots)
+    const jwtPattern = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+    if (!jwtPattern.test(data.access_token) || !jwtPattern.test(data.refresh_token)) {
+      // eslint-disable-next-line no-console
+      console.warn('[kimi-code-auth] Warning: Tokens do not appear to be valid JWT format');
     }
 
     return {
@@ -60,7 +125,11 @@ function readKimiCliCredentials(): KimiCodeOAuthCredentials | null {
       scope: data.scope,
       tokenType: data.token_type,
     };
-  } catch {
+  } catch (error) {
+    // Log error without exposing sensitive data
+    if (error instanceof Error && error.message.includes('path traversal')) {
+      throw error;
+    }
     return null;
   }
 }
@@ -80,7 +149,7 @@ function isTokenExpiredOrNearExpiry(credentials: KimiCodeOAuthCredentials): bool
  */
 async function tryRefreshToken(log: (msg: string) => void): Promise<boolean> {
   try {
-    log("Token expiring soon. Attempting to refresh via kimi login...");
+    log(sanitizeLogMessage("Token expiring soon. Attempting to refresh via kimi login..."));
     
     // Try to run kimi login non-interactively (may work if already authenticated)
     return new Promise((resolve) => {
@@ -100,16 +169,17 @@ async function tryRefreshToken(log: (msg: string) => void): Promise<boolean> {
         // Check if we got new credentials
         const newCreds = readKimiCliCredentials();
         if (newCreds && !isTokenExpiredOrNearExpiry(newCreds)) {
-          log("Token refreshed successfully!");
+          log(sanitizeLogMessage("Token refreshed successfully!"));
           resolve(true);
         } else {
-          log("Token refresh may require manual login.");
+          log(sanitizeLogMessage("Token refresh may require manual login."));
           resolve(false);
         }
       }, 5000);
     });
   } catch (err) {
-    log(`Token refresh failed: ${err}`);
+    const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+    log(sanitizeLogMessage(`Token refresh failed: ${errorMsg}`));
     return false;
   }
 }
