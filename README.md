@@ -47,6 +47,18 @@ kimi whoami
 
 ### 4. Install the Plugin
 
+#### Option A: Install from GitHub (recommended)
+
+```bash
+# Install directly from GitHub
+openclaw plugins install https://github.com/FelipeOFF/openclaw-kimi-code-auth
+
+# Restart the gateway
+openclaw gateway restart
+```
+
+#### Option B: Clone and install locally
+
 ```bash
 # Clone this repository
 git clone https://github.com/FelipeOFF/openclaw-kimi-code-auth.git
@@ -117,12 +129,22 @@ openclaw cron add \
 
 ## 🏗️ Architecture
 
-This plugin integrates with the official Kimi CLI's OAuth flow:
+This plugin follows the same pattern as official OpenClaw OAuth providers:
+
+### OAuth Flow
 
 1. **Kimi CLI** handles the OAuth dance with Moonshot AI
 2. **Tokens** are stored securely in `~/.kimi/credentials/kimi-code.json`
 3. **This plugin** reads those tokens and provides them to OpenClaw
 4. **Auto-refresh** happens automatically when you use `kimi` commands
+
+### Plugin Pattern
+
+Following the same architecture as official providers:
+- Uses `api.registerProvider()` to register the OAuth provider
+- Returns `configPatch` to automatically register models and provider config
+- Uses `OAUTH_PLACEHOLDER` for apiKey (same as Qwen, Gemini plugins)
+- Models are automatically added to the allowlist
 
 ```
 ┌─────────────┐     OAuth     ┌──────────────┐
@@ -136,14 +158,20 @@ This plugin integrates with the official Kimi CLI's OAuth flow:
 │ ~/.kimi/    │ ─────────────► │  This Plugin │
 │ credentials │                │              │
 └─────────────┘                └──────┬───────┘
-                                      │
-                                      │ provides
+                                      │ configPatch
                                       ▼
                                ┌──────────────┐
                                │   OpenClaw   │
                                │   Gateway    │
                                └──────────────┘
 ```
+
+### Similar Providers
+
+This plugin follows the same architecture as:
+- `@openclaw/qwen-portal-auth` - Qwen OAuth
+- `@openclaw/google-gemini-cli-auth` - Gemini OAuth  
+- `@openclaw/google-antigravity-auth` - Google Antigravity OAuth
 
 ## 🛠️ Development
 
