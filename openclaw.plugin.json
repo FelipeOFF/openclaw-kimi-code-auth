@@ -1,6 +1,6 @@
 {
   "id": "kimi-code-auth",
-  "providers": ["kimi-code"],
+  "providers": ["kimi-coding"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

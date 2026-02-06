@@ -9,8 +9,8 @@
  * - Kimi CLI must be installed: https://github.com/moonshot-ai/kimi-cli
  * - User must be logged in: `kimi login`
  * 
- * Provider ID: kimi-code
- * Model: kimi-code/kimi-for-coding
+ * Provider ID: kimi-coding
+ * Model: kimi-coding/kimi-for-coding
  */
 
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
@@ -19,8 +19,10 @@ import { loginKimiCodeOAuth } from "./oauth.js";
 const PROVIDER_ID = "kimi-coding";
 const PROVIDER_LABEL = "Kimi Code OAuth";
 const DEFAULT_MODEL = "kimi-coding/kimi-for-coding";
+const DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1";
+const OAUTH_PLACEHOLDER = "kimi-oauth";
 
-const kimiCodePlugin = {
+const kimiCodingPlugin = {
   id: "kimi-code-auth",
   name: "Kimi Code Auth",
   description: "OAuth flow for Kimi Code CLI (Moonshot AI coding assistant)",
@@ -72,6 +74,31 @@ const kimiCodePlugin = {
                   },
                 ],
                 configPatch: {
+                  models: {
+                    providers: {
+                      [PROVIDER_ID]: {
+                        baseUrl: DEFAULT_BASE_URL,
+                        apiKey: OAUTH_PLACEHOLDER,
+                        api: "openai-completions",
+                        models: [
+                          {
+                            id: "kimi-for-coding",
+                            name: "Kimi for Coding (OAuth)",
+                            reasoning: true,
+                            input: ["text", "image"],
+                            cost: {
+                              input: 0,
+                              output: 0,
+                              cacheRead: 0,
+                              cacheWrite: 0,
+                            },
+                            contextWindow: 262144,
+                            maxTokens: 8192,
+                          },
+                        ],
+                      },
+                    },
+                  },
                   agents: {
                     defaults: {
                       models: {
@@ -117,4 +144,4 @@ const kimiCodePlugin = {
   },
 };
 
-export default kimiCodePlugin;
+export default kimiCodingPlugin;
